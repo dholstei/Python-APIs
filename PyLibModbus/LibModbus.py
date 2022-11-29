@@ -15,8 +15,11 @@ from PyQt5.QtWidgets import (
     QApplication, 
     QFileDialog
 )
-from numpy import array
-# import MessageBox as M
+
+class MODBUS_RTU:
+    RS232 = 0
+    RS485 = 1
+
 import utils
 
 libModbus = None
@@ -35,7 +38,6 @@ def SetLibXmlPath(path: str):
 class modbus:
     ctx: ctypes.c_void_p
     errno: ctypes.c_int = 0
-    
     def __init__(self, ctx = 0):
         self.ctx = ctx
 
@@ -92,6 +94,33 @@ class modbus:
         self.ctx = libModbus.modbus_new_rtu(device.encode(), baud, ctypes.c_char(ord(parity)), data_bit, stop_bit)
         if self.ctx == 0: raise LibErr()
         return
+
+    def rtu_set_serial_mode (self,  mode: int) -> ctypes.c_int:
+        '''
+        modbus_rtu_set_serial_mode - set the serial mode
+        int modbus_rtu_set_serial_mode(modbus_t *ctx, int mode);
+
+        Description
+        The modbus_rtu_set_serial_mode() function shall set the selected serial mode:
+
+        MODBUS_RTU_RS232, the serial line is set for RS232 communication. RS-232 (Recommended Standard 232) is the traditional name for a series of standards for serial binary single-ended data and control signals connecting between a DTE (Data Terminal Equipment) and a DCE (Data Circuit-terminating Equipment). It is commonly used in computer serial ports.
+
+        MODBUS_RTU_RS485, the serial line is set for RS485 communication. EIA-485, also known as TIA/EIA-485 or RS-485, is a standard defining the electrical characteristics of drivers and receivers for use in balanced digital multipoint systems. This standard is widely used for communications in industrial automation because it can be used effectively over long distances and in electrically noisy environments.
+        #define 	MODBUS_RTU_RS232   0
+        #define 	MODBUS_RTU_RS485   1
+        '''
+        
+        global libModbus
+    # Load DLL into memory. 
+        if libModbus == None: raise NullDLL()
+
+    # set up prototype
+        libModbus.modbus_rtu_set_serial_mode.restype = ctypes.c_int # correct return type
+        libModbus.modbus_rtu_set_serial_mode.argtypes = ctypes.c_void_p, ctypes.c_int,
+
+        rc = libModbus.modbus_rtu_set_serial_mode(self.ctx, mode)
+        if rc:  self.GetErrno()
+        return rc # 
 
     def set_slave (self,  slave: int) -> ctypes.c_int:
         '''
@@ -167,12 +196,41 @@ class modbus:
         if rc == -1: self.GetErrno()
         return rc
 
+    def write_bits (self, addr: int, src: bytearray) -> ctypes.c_int:
+        '''
+        modbus_write_bits - write many bits
+        int modbus_write_bits(modbus_t *ctx, int addr, int nb, const uint8_t *src);
+
+        Description
+        The modbus_write_bits() function shall write the status of the nb bits (coils) from src at the address addr of the remote device. The src array must contains bytes set to TRUE or FALSE.
+
+        The function uses the Modbus function code 0x0F (force multiple coils).
+
+        Return value
+        The function shall return the number of written bits if successful. Otherwise it shall return -1 and set errno.
+        
+        Note:  Length of bytearray used instead of nb
+        '''
+        global libModbus
+    # Load DLL into memory. 
+        if libModbus == None: raise NullDLL()
+
+    # set up prototype
+        libModbus.modbus_write_bits.restype = ctypes.c_int # correct return type
+        libModbus.modbus_write_bits.argtypes = ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_byte),
+
+        rc = libModbus.modbus_write_bits(self.ctx, addr, len(src), 
+                        (ctypes.c_byte*len(src)).from_buffer(bytearray(src)))
+        if rc == -1: 
+            self.GetErrno()
+            return None
+        return rc
+
     def read_bits (self, addr: int, nb: int) -> ctypes.POINTER(ctypes.c_byte):
         '''
-        Name
         modbus_read_bits - read many bits
-
         int modbus_read_bits(modbus_t *ctx, int addr, int nb, uint8_t *dest);
+
         Description
         The modbus_read_bits() function shall read the status of the nb bits (coils) to the address addr of the remote device. The result of reading is stored in dest array as unsigned bytes (8 bits) set to TRUE or FALSE.
 
@@ -200,6 +258,128 @@ class modbus:
             return None
         return dest
 
+    def read_input_bits (self, addr: int, nb: int) -> ctypes.POINTER(ctypes.c_byte):
+        '''
+        modbus_read_input_bits - read many input bits
+        int modbus_read_input_bits(modbus_t *ctx, int addr, int nb, uint8_t *dest);
+
+        Description
+        The modbus_read_input_bits() function shall read the content of the nb input bits to the address addr of the remote device. The result of reading is stored in dest array as unsigned bytes (8 bits) set to TRUE or FALSE.
+
+        You must take care to allocate enough memory to store the results in dest (at least nb * sizeof(uint8_t)).
+
+        The function uses the Modbus function code 0x02 (read input status).
+
+        Return value
+        The function shall return the number of read input status if successful. Otherwise it shall return -1 and set errno.
+        '''
+        
+        global libModbus
+    # Load DLL into memory. 
+        if libModbus == None: raise NullDLL()
+        dest = (ctypes.c_byte * nb)()
+
+    # set up prototype
+        libModbus.modbus_read_input_bits.restype = ctypes.c_int # correct return type
+        libModbus.modbus_read_input_bits.argtypes = ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_byte),
+
+    # wrapping in c_char_p or c_int32 isn't required because .argtypes are known.
+        rc = libModbus.modbus_read_input_bits(self.ctx, addr, nb, dest)
+        if rc == -1: 
+            self.GetErrno()
+            return None
+        return dest
+
+    def write_register (self, addr: int, value: ctypes.c_uint16) -> ctypes.c_int:
+        '''
+        modbus_write_register - write a single register
+        int modbus_write_register(modbus_t *ctx, int addr, const uint16_t value);
+
+        Description
+        The modbus_write_register() function shall write the value of value holding registers at the address addr of the remote device.
+
+        The function uses the Modbus function code 0x06 (preset single register).
+
+        Return value
+        The function shall return 1 if successful. Otherwise it shall return -1 and set errno.
+        '''
+        
+        global libModbus
+    # Load DLL into memory. 
+        if libModbus == None: raise NullDLL()
+
+    # set up prototype
+        libModbus.modbus_write_register.restype = ctypes.c_int # correct return type
+        libModbus.modbus_write_register.argtypes = ctypes.c_void_p, ctypes.c_int, ctypes.c_uint16,
+
+        rc = libModbus.modbus_write_register(self.ctx, addr, value)
+        if rc == -1: self.GetErrno()
+        return rc
+
+    def read_registers (self, addr: int, nb: int) -> ctypes.POINTER(ctypes.c_uint16):
+        '''
+        modbus_read_registers - read many registers
+        int modbus_read_registers(modbus_t *ctx, int addr, int nb, uint16_t *dest);
+
+        Description
+        The modbus_read_registers() function shall read the content of the nb holding registers to the address addr of the remote device. The result of reading is stored in dest array as word values (16 bits).
+
+        You must take care to allocate enough memory to store the results in dest (at least nb * sizeof(uint16_t)).
+
+        The function uses the Modbus function code 0x03 (read holding registers).
+
+        Return value
+        The function shall return the number of read registers if successful. Otherwise it shall return -1 and set errno.
+        '''
+        
+        global libModbus
+    # Load DLL into memory. 
+        if libModbus == None: raise NullDLL()
+        dest = (ctypes.c_uint16 * nb)()
+
+    # set up prototype
+        libModbus.modbus_read_registers.restype = ctypes.c_int # correct return type
+        libModbus.modbus_read_registers.argtypes = ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_uint16),
+
+    # wrapping in c_char_p or c_int32 isn't required because .argtypes are known.
+        rc = libModbus.modbus_read_registers(self.ctx, addr, nb, dest)
+        if rc == -1: 
+            self.GetErrno()
+            return None
+        return dest
+
+    def read_input_registers (self, addr: int, nb: int) -> ctypes.POINTER(ctypes.c_uint16):
+        '''
+        modbus_read_input_registers - read many input registers
+        int modbus_read_input_registers(modbus_t *ctx, int addr, int nb, uint16_t *dest);
+
+        Description
+        The modbus_read_input_registers() function shall read the content of the nb input registers to address addr of the remote device. The result of the reading is stored in dest array as word values (16 bits).
+
+        You must take care to allocate enough memory to store the results in dest (at least nb * sizeof(uint16_t)).
+
+        The function uses the Modbus function code 0x04 (read input registers). The holding registers and input registers have different historical meaning, but nowadays it's more common to use holding registers only.
+
+        Return value
+        The function shall return the number of read input registers if successful. Otherwise it shall return -1 and set errno.        
+        '''
+        
+        global libModbus
+    # Load DLL into memory. 
+        if libModbus == None: raise NullDLL()
+        dest = (ctypes.c_uint16 * nb)()
+
+    # set up prototype
+        libModbus.modbus_read_input_registers.restype = ctypes.c_int # correct return type
+        libModbus.modbus_read_input_registers.argtypes = ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_uint16),
+
+    # wrapping in c_char_p or c_int32 isn't required because .argtypes are known.
+        rc = libModbus.modbus_read_input_registers(self.ctx, addr, nb, dest)
+        if rc == -1: 
+            self.GetErrno()
+            return None
+        return dest
+
     def GetErrno(self) -> ctypes.c_int:
         l = ctypes.CDLL ("/lib64/libc.so.6")
         self.errno = (ctypes.c_int.in_dll(l,"errno")).value
@@ -222,16 +402,6 @@ class NullDLL(Exception):
         self.message = message
         super().__init__(self.message)
 
-class libNullPtr(Exception):
-    """Exception raised if "xmlDocPtr = NULL"
-
-    Attributes:
-        message -- explanation of the error
-    """
-
-    def __init__(self, message="modbus context pointer may not be NULL"):
-        self.message = message
-        super().__init__(self.message)
 
 class LibErr(Exception):
     """
@@ -247,21 +417,36 @@ class LibErr(Exception):
         super().__init__(self.message)
 
 def test():
+    import time
     app = QApplication(sys.argv)
     FileObj = QFileDialog.getOpenFileName(None, "Select device", "/dev", None)
 
     if len(FileObj[0]) > 0:
-        # ctx = modbus_new_rtu(FileObj[0], 115200, 'N', 0, 0)
         m = modbus()
         m.new_rtu(FileObj[0], 115200, 'N', 0, 0)
-        n = modbus(m.ctx)   #   copy, not reentrant for the same object m.ctx
-        if n.set_slave(0) == -1:    raise Exception(n.GetErrMsg())
-        if n.connect() == -1:       raise Exception(n.GetErrMsg())
-        if n.write_bit(8, 0) == -1: raise Exception(n.GetErrMsg())
-        if n.write_bit(9, 1) == -1: raise Exception(n.GetErrMsg())
-        dest = n.read_bits(8, 8)
-        if dest == None:            raise Exception(n.GetErrMsg())
+        # n = modbus(m.ctx)   #   copy, not reentrant for the same object m.ctx
+        if m.set_slave(0) == -1:    raise Exception(m.GetErrMsg())
+        if m.rtu_set_serial_mode(MODBUS_RTU.RS232) == -1:   raise Exception(m.GetErrMsg())
+        if m.connect() == -1:       raise Exception(m.GetErrMsg())
+        time.sleep(0.250)
+        if m.write_bit(8, 1) == -1: raise Exception(m.GetErrMsg())
+        if m.write_bit(9, 1) == -1: raise Exception(m.GetErrMsg())
+        
+        dest = m.read_bits(8, 8)
+        if dest == None:            raise Exception(m.GetErrMsg())
         for i in range(8): print(dest[i])
+        print("---")
+        
+        if m.write_register(0, 20000) == -1:    raise Exception(m.GetErrMsg())
+        
+        src = bytearray([0, 0, 1, 0])
+        if m.write_bits(8, src) == -1:    raise Exception(m.GetErrMsg())
+        
+        dest = m.read_registers(0, 2)
+        if dest == None:            raise Exception(m.GetErrMsg())
+        for i in range(2): print(dest[i])
+        print("---")
+        
     return
 
 test()
